@@ -1,0 +1,248 @@
+# =============================================================================
+# Dev-box image for Fedora Atomic, run with ROOTLESS PODMAN.
+#
+# NOT distrobox/toolbox (those mount your whole host home + /run/host and are
+# "integration, not isolation"). This image is launched with ~/dev mounted as
+# the container's $HOME, plus the explicit read-only configuration mounts below.
+# The rest of your host home, including ~/.ssh, is not mounted.
+#
+# Isolation comes from the staged dev.container, promoted by setup-containers.
+# The helper builds a distinct candidate with the host's numeric UID/GID, pins
+# the active Quadlet to the resulting immutable image ID, and validates startup.
+# Do not retag the running image or replace the active Quadlet by hand.
+# Only reviewed static fish files are shared; container fish_variables stay
+# writable and private in the persistent dev home.
+#
+# First-run setup (inside the container, once -- persists in ~/dev on host):
+#   bat cache --build      # picks up themes from ~/.config/bat (e.g. dayfox)
+#
+# This file's job: bake toolchains into /usr and /opt (not all versions pinned),
+# while all mutable per-tool state lands under $HOME (=~/dev), isolated and
+# persistent across container rebuilds.
+#
+# Build (match UID/GID to your host user so ~/dev files are owned by you):
+#   podman build -t localhost/devbox:manual-candidate \
+#     --build-arg USER_UID=$(id -u) --build-arg USER_GID=$(id -g) \
+#     -f Containerfile.dev .
+# Prefer setup-containers for normal builds; --update deliberately pulls the
+# base and bypasses cached build layers. Both modes preserve explicit pins.
+#
+# Stronger reproducibility: pin the base by digest instead of the :44 tag:
+#   FROM quay.io/fedora/fedora@sha256:<digest>
+# =============================================================================
+
+ARG FEDORA_VERSION=44
+FROM quay.io/fedora/fedora:${FEDORA_VERSION}
+
+ARG USER_NAME=dev
+ARG USER_UID=1000
+ARG USER_GID=1000
+
+ARG LSPCONFIG_REF=9573948c38bfabeec353ae7dd7d3ffec4c506a6b
+ARG RUSTACEAN_REF=95f9e17010f232f6a5d631be821c9eb9b14469c2
+ARG GITSIGNS_REF=dd3f588bacbeb041be6facf1742e42097f62165d
+ARG NIGHTFOX_REF=26b61b1
+ARG FUGITIVE_REF=3b753cf
+ARG GOPLS_VERSION=v0.22.0
+ARG OPENCODE_VERSION=1.18.32
+# nvim-treesitter master is in maintenance mode past v0.10.0 (mid-2024) -- new
+# development moved to the `main` branch as an incompatible rewrite -- so this
+# is pinned to a master SHA rather than a tag. Bump with:
+#   git ls-remote https://github.com/nvim-treesitter/nvim-treesitter refs/heads/master
+ARG NVIM_TREESITTER_REF=cf12346a3414fa1b06af75c79faebe7f76df080a
+ARG TOKEI_VERSION=14.0.0
+
+# --- Base build/runtime deps -------------------------------------------------
+# system python3 stays: tooling expects /usr/bin/python3. Your *project*
+# interpreters are managed by uv and live under $HOME (=~/dev), not here.
+RUN dnf -y install \
+        gcc gcc-c++ make cmake pkgconf-pkg-config \
+        git curl ca-certificates shadow-utils jq \
+        neovim fish zoxide ripgrep par golang bat tree \
+        python3 python3-pip \
+        gh openssl-devel \
+    && dnf clean all
+
+# --- Unprivileged user (UID/GID should match your host; see build args) ------
+RUN groupadd -g ${USER_GID} ${USER_NAME} \
+    && useradd -m -u ${USER_UID} -g ${USER_GID} -s /bin/bash ${USER_NAME}
+
+# --- uv (system-wide binary, outside HOME) -----------------------------------
+RUN curl -LsSf https://astral.sh/uv/install.sh \
+      | env UV_INSTALL_DIR=/usr/local/bin sh
+
+# --- ruff + ty via uv, baked into the image (outside HOME) -------------------
+# Both are Astral tools that ship a built-in LSP ('ruff server', 'ty server').
+# NOTE: verify ty's install name/command against Astral's current docs -- ty is
+# young and still moving; the line below assumes `uv tool install ty`.
+ENV UV_TOOL_DIR=/opt/uv/tools \
+    UV_TOOL_BIN_DIR=/usr/local/bin
+RUN uv tool install ruff \
+    && uv tool install ty
+
+# --- Rust toolchain baked into /opt (immutable at runtime; rebuild to bump) --
+# rustc/cargo/clippy/rustfmt are pinned by the image. `cargo install <tool>`
+# still works at runtime and persists, because CARGO_HOME resolves to $HOME
+# (see profile.d below) i.e. ~/dev/.cargo.
+# rust-analyzer is added as a component; rustup (>=1.26) ships a proxy binary in
+# CARGO_HOME/bin (=/opt/rust/cargo/bin, on PATH) that dispatches to the active
+# toolchain's rust-analyzer, so rustaceanvim's `cmd = { "rust-analyzer" }` just works.
+ENV RUSTUP_HOME=/opt/rust/rustup \
+    CARGO_HOME=/opt/rust/cargo
+RUN curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs \
+      | sh -s -- -y --no-modify-path --profile minimal --default-toolchain stable \
+    && /opt/rust/cargo/bin/rustup component add clippy rustfmt rust-analyzer rust-src
+
+# --- tokei baked into /usr/local/bin (Rust line-counter; same pattern as gopls/ruff) -
+# Built from crates.io using the in-image Rust toolchain. --locked uses tokei's
+# Cargo.lock so the build is reproducible. --root /usr/local lands the binary at
+# /usr/local/bin/tokei (on PATH for every shell) and writes some metadata files
+# at /usr/local/.crates*.toml which we drop afterwards.
+# Bump with: cargo search tokei
+RUN /opt/rust/cargo/bin/cargo install tokei --version ${TOKEI_VERSION} --locked --root /usr/local \
+ && rm -f /usr/local/.crates.toml /usr/local/.crates2.json
+
+# --- gopls baked into /usr/local/bin (Go LSP; same pattern as ruff/ty) -------
+# GOPATH/GOCACHE are pointed at /tmp so the module + build caches don't bloat
+# the image; the resulting binary lands in GOBIN=/usr/local/bin which is on
+# PATH for every shell. Pin to a release TAG, not a commit SHA -- gopls's
+# umbrella x/tools go.mod has `replace` directives that break `go install`
+# from a pseudo-version, but the tagged gopls sub-module's go.mod is clean.
+# List tags with:
+#   git ls-remote --tags https://go.googlesource.com/tools 'refs/tags/gopls/v*' \
+#     | awk '{print $2}' | sed 's|refs/tags/gopls/||' | sort -V | tail
+RUN GOPATH=/tmp/gobuild GOCACHE=/tmp/gobuild/cache GOBIN=/usr/local/bin \
+        go install golang.org/x/tools/gopls@${GOPLS_VERSION} \
+ && rm -rf /tmp/gobuild
+
+# --- Neovim plugins baked into a READ-ONLY system packpath ------------------
+# NOT under ~/.local/share/nvim: that path is shadowed by the ~/dev bind mount
+# at runtime and would be writable by code running in the box.
+# /usr/share/nvim/site is on Neovim's default 'packpath', and plugins placed
+# under pack/*/start/ are auto-loaded -- no `packloadall` needed.
+# Full clone + checkout a pinned commit (shallow --depth 1 CANNOT check out an
+# arbitrary historical SHA), then drop .git. Verify the SHAs are real commits:
+#   git ls-remote https://github.com/neovim/nvim-lspconfig
+#   git ls-remote https://github.com/mrcjkb/rustaceanvim
+#   git ls-remote https://github.com/lewis6991/gitsigns.nvim
+# --- One layer per plugin: adding a plugin only rebuilds the new layer -------
+RUN mkdir -p /usr/share/nvim/site/pack/devbox/start
+
+# nvim-lspconfig -- server presets collection for the built-in LSP client
+RUN git clone https://github.com/neovim/nvim-lspconfig \
+        /usr/share/nvim/site/pack/devbox/start/nvim-lspconfig \
+ && git -C /usr/share/nvim/site/pack/devbox/start/nvim-lspconfig checkout ${LSPCONFIG_REF} \
+ && nvim --headless -u NONE -c "helptags /usr/share/nvim/site/pack/devbox/start/nvim-lspconfig/doc" -c q \
+ && rm -rf /usr/share/nvim/site/pack/devbox/start/nvim-lspconfig/.git
+
+# rustaceanvim -- auto-attaches rust-analyzer; owns Rust LSP wiring
+RUN git clone https://github.com/mrcjkb/rustaceanvim \
+        /usr/share/nvim/site/pack/devbox/start/rustaceanvim \
+ && git -C /usr/share/nvim/site/pack/devbox/start/rustaceanvim checkout ${RUSTACEAN_REF} \
+ && nvim --headless -u NONE -c "helptags /usr/share/nvim/site/pack/devbox/start/rustaceanvim/doc" -c q \
+ && rm -rf /usr/share/nvim/site/pack/devbox/start/rustaceanvim/.git
+
+# nightfox.nvim -- colorscheme (provides nightfox, dayfox, dawnfox, ...)
+RUN git clone https://github.com/EdenEast/nightfox.nvim \
+        /usr/share/nvim/site/pack/devbox/start/nightfox \
+ && git -C /usr/share/nvim/site/pack/devbox/start/nightfox checkout ${NIGHTFOX_REF} \
+ && nvim --headless -u NONE -c "helptags /usr/share/nvim/site/pack/devbox/start/nightfox/doc" -c q \
+ && rm -rf /usr/share/nvim/site/pack/devbox/start/nightfox/.git
+
+# vim-fugitive -- git wrapper
+RUN git clone https://github.com/tpope/vim-fugitive \
+        /usr/share/nvim/site/pack/devbox/start/fugitive \
+ && git -C /usr/share/nvim/site/pack/devbox/start/fugitive checkout ${FUGITIVE_REF} \
+ && nvim --headless -u NONE -c "helptags /usr/share/nvim/site/pack/devbox/start/fugitive/doc" -c q \
+ && rm -rf /usr/share/nvim/site/pack/devbox/start/fugitive/.git
+
+# gitsigns.nvim -- gutter diff signs (replaces vim-gitgutter)
+RUN git clone https://github.com/lewis6991/gitsigns.nvim \
+        /usr/share/nvim/site/pack/devbox/start/gitsigns \
+ && git -C /usr/share/nvim/site/pack/devbox/start/gitsigns checkout ${GITSIGNS_REF} \
+ && nvim --headless -u NONE -c "helptags /usr/share/nvim/site/pack/devbox/start/gitsigns/doc" -c q \
+ && rm -rf /usr/share/nvim/site/pack/devbox/start/gitsigns/.git
+
+# nvim-treesitter -- queries + :TSInstall machinery; parsers installed below
+# Highlighting still needs an explicit setup() call in your nvim config:
+#   require'nvim-treesitter.configs'.setup{ highlight = { enable = true } }
+RUN git clone https://github.com/nvim-treesitter/nvim-treesitter \
+        /usr/share/nvim/site/pack/devbox/start/nvim-treesitter \
+ && git -C /usr/share/nvim/site/pack/devbox/start/nvim-treesitter checkout ${NVIM_TREESITTER_REF} \
+ && nvim --headless -u NONE -c "helptags /usr/share/nvim/site/pack/devbox/start/nvim-treesitter/doc" -c q \
+ && rm -rf /usr/share/nvim/site/pack/devbox/start/nvim-treesitter/.git
+
+# --- tree-sitter parsers, installed via nvim-treesitter's own lockfile -------
+# Delegated to :TSInstallSync so parser grammars stay in lockstep with the
+# queries shipped by nvim-treesitter: install.lua reads lockfile.json at the
+# pinned NVIM_TREESITTER_REF and compiles each parser from that exact commit
+# (with cc; tree-sitter CLI + node are only needed if regenerating from grammar,
+# which we don't). Adding a language = extend the TSInstallSync list.
+# parser_install_dir puts .so files at /usr/share/nvim/site/parser/<lang>.so,
+# on nvim's default packpath -- same location as before, discovered without
+# any user config.
+RUN mkdir -p /usr/share/nvim/site/parser \
+ && nvim --headless \
+      -c 'lua require("nvim-treesitter.configs").setup({ parser_install_dir = "/usr/share/nvim/site" })' \
+      -c 'TSInstallSync go rust python' \
+      -c q
+
+# --- PATH for all shells; user-writable state resolves under $HOME (=~/dev) ---
+ENV PATH="/opt/rust/cargo/bin:/usr/local/bin:${PATH}"
+# bash login shells:
+RUN printf '%s\n' \
+      'export RUSTUP_HOME=/opt/rust/rustup' \
+      'export CARGO_HOME="$HOME/.cargo"' \
+      'export GOPATH="$HOME/go"' \
+      'export PATH="/opt/rust/cargo/bin:$HOME/.cargo/bin:$HOME/go/bin:/usr/local/bin:$PATH"' \
+      > /etc/profile.d/devbox.sh
+# fish shells (fish ignores /etc/profile.d; conf.d is sourced for every session):
+RUN mkdir -p /etc/fish/conf.d \
+    && printf '%s\n' \
+      'set -gx RUSTUP_HOME /opt/rust/rustup' \
+      'set -gx CARGO_HOME "$HOME/.cargo"' \
+      'set -gx GOPATH "$HOME/go"' \
+      'set -gx PATH /opt/rust/cargo/bin "$HOME/.cargo/bin" "$HOME/go/bin" /usr/local/bin $PATH' \
+      > /etc/fish/conf.d/devbox.fish
+
+# --- LaTeX: compile in the container, view the shared PDF on the host --------
+# Fedora's texlive metapackage supplies scheme-basic + latexrecommended.
+# Recommended fonts include Palatino/Pazo, Latin Modern, and TeX Gyre.
+# bibtexextra includes biblatex and many citation styles, including Nature.
+# titlesec supplies the heading formatting used by main.tex.
+# latexmk handles repeat runs, bibliography tools, and watching source changes.
+# Keep latexmk and biber explicit for compilation and bibliography processing.
+# Keeping this near the end preserves earlier toolchain caches.
+RUN dnf -y install \
+        texlive \
+        texlive-collection-fontsrecommended \
+        texlive-collection-bibtexextra \
+        texlive-titlesec \
+        latexmk \
+        biber \
+    && dnf clean all
+
+# Live compilation inside the container (replace paper/main.tex as needed):
+#   cd /home/dev/paper
+#   latexmk -pdf -pvc -view=none -interaction=nonstopmode -file-line-error main.tex
+# The PDF is /home/dev/paper/main.pdf here and ~/dev/paper/main.pdf on the host.
+# Open it in a host PDF viewer with automatic reloading enabled.
+# -view=none keeps latexmk from launching a viewer inside the container.
+
+# --- OpenCode: pinned standalone binary, outside the mounted HOME ------------
+# Bump this version (or pass --build-arg OPENCODE_VERSION=...) and rebuild to
+# upgrade. The official installer selects the architecture and CPU variant.
+# It stages the binary in the build user's HOME; install it system-wide before
+# switching to dev so /home/dev's bind mount cannot hide the image's binary.
+ENV OPENCODE_DISABLE_AUTOUPDATE=true
+RUN dnf -y install tar gzip \
+    && dnf clean all \
+    && curl -fsSL https://opencode.ai/install -o /tmp/opencode-install.sh \
+    && bash /tmp/opencode-install.sh --version "${OPENCODE_VERSION}" --no-modify-path \
+    && install -m 0755 "$HOME/.opencode/bin/opencode" /usr/local/bin/opencode \
+    && rm -f /tmp/opencode-install.sh "$HOME/.opencode/bin/opencode" \
+    && /usr/local/bin/opencode --version
+
+USER ${USER_NAME}
+WORKDIR /home/${USER_NAME}
+CMD ["/usr/bin/fish", "-l"]

@@ -1,0 +1,13 @@
+{{- $gitName := promptStringOnce . "gitName" "Git name" -}}
+{{- $gitEmail := promptStringOnce . "gitEmail" "Git email" -}}
+{{- $profile := promptChoiceOnce . "profile" "Machine profile" (list "local" "work") -}}
+{{- if and (ne $profile "local") (ne $profile "work") -}}
+{{- fail "profile must be local or work" -}}
+{{- end -}}
+[data]
+    gitName = {{ $gitName | quote }}
+    gitEmail = {{ $gitEmail | quote }}
+    profile = {{ $profile | quote }}
+{{ if index . "devWorkspace" }}
+    devWorkspace = {{ index . "devWorkspace" | quote }}
+{{ end }}

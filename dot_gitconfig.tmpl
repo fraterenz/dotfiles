@@ -1,0 +1,19 @@
+[user]
+	name = {{ .gitName }}
+	email = {{ .gitEmail }}
+
+[pull]
+	rebase = true
+[merge]
+	conflictstyle = diff3
+[commit]
+	verbose = true
+[help]
+	autocorrect = 20
+[core]
+	pager = bat
+[diff]
+	algorithm = histogram
+[alias]
+	adog = log --all --decorate --oneline --graph
+	st = status --short

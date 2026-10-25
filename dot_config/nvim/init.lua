@@ -1,0 +1,10 @@
+require('config.options')
+require('config.plugins')
+require('config.treesitter')
+require('config.autocmds')
+require('config.style')
+require('config.search')
+require('config.keybinds')
+
+vim.cmd('syntax on')
+vim.cmd('filetype plugin indent on')

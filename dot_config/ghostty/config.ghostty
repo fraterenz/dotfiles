@@ -1,0 +1,11 @@
+command = /usr/bin/fish
+theme = Dayfox
+font-size = 14
+
+# Clipboard / OSC 52 policy
+# copy-out works without a prompt
+clipboard-write = allow
+# block programs reading the host clipboard (no exfiltration)
+clipboard-read = deny
+# warn before pasting text that could auto-execute
+clipboard-paste-protection = true

@@ -1,0 +1,111 @@
+{
+  "schema_version": 1,
+  "profile": {{ .profile | toJson }},
+  "profiles": {
+    "local": {
+      "os": "fedora",
+      "variant": "sway-atomic",
+      "native_packages": [
+        {"name": "git-core", "source": "distribution"},
+        {"name": "python3", "source": "distribution"},
+        {"name": "fish", "source": "distribution"},
+        {"name": "podman", "source": "distribution"},
+        {"name": "flatpak", "source": "distribution"},
+        {"name": "ghostty", "source": "terra", "required_repository": "terra"}
+      ],
+      "flatpak_installations": [
+        {"id": "user", "scope": "user"},
+        {"id": "system", "scope": "system"}
+      ]
+    },
+    "work": {
+      "os": "rocky",
+      "major_version": "9",
+      "native_packages": [
+        {"name": "git-core", "source": "approved-site-repositories"},
+        {"name": "python3", "source": "approved-site-repositories"},
+        {"name": "fish", "source": "approved-site-repositories"},
+        {"name": "podman", "source": "approved-site-repositories"}
+      ],
+      "flatpak_installations": []
+    }
+  },
+  "flatpaks": [
+    {"id": "com.google.Chrome", "remote": "flathub", "installation": "system", "profiles": ["local"]},
+    {"id": "io.mpv.Mpv", "remote": "flathub", "installation": "system", "profiles": ["local"]},
+    {"id": "org.gnome.Papers", "remote": "flathub", "installation": "user", "profiles": ["local"]},
+    {"id": "org.zotero.Zotero", "remote": "flathub", "installation": "system", "profiles": ["local"]}
+  ],
+  "sources": {
+    "terra": "https://terra.fyralabs.com/",
+    "flathub": "https://flathub.org/"
+  },
+  "downloaded_tools": [
+    {
+      "id": "chezmoi", "repository": "twpayne/chezmoi", "executable": "chezmoi",
+      "destination": ".local/bin/chezmoi",
+      "version": {"policy": "latest"}, "aliases": [], "profiles": ["local", "work"],
+      "assets": {
+        "x86_64": ["chezmoi_{version}_linux-musl_amd64.tar.gz", "chezmoi_{version}_linux_amd64.tar.gz"],
+        "aarch64": ["chezmoi_{version}_linux_arm64.tar.gz"]
+      },
+      "checksum_asset": "chezmoi_{version}_checksums.txt",
+      "compatibility": "Prefer musl on x86_64; validate ELF architecture and probe the binary on the running host."
+    },
+    {
+      "id": "bat", "repository": "sharkdp/bat", "executable": "bat",
+      "destination": ".local/bin/bat",
+      "version": {"policy": "latest"}, "aliases": [], "profiles": ["local", "work"],
+      "assets": {
+        "x86_64": ["bat-{tag}-x86_64-unknown-linux-musl.tar.gz"],
+        "aarch64": ["bat-{tag}-aarch64-unknown-linux-musl.tar.gz"]
+      },
+      "compatibility": "Upstream Linux musl build; validate architecture and probe before replacement."
+    },
+    {
+      "id": "fzf", "repository": "junegunn/fzf", "executable": "fzf",
+      "destination": ".local/bin/fzf",
+      "version": {"policy": "latest"}, "aliases": [], "profiles": ["local", "work"],
+      "assets": {
+        "x86_64": ["fzf-{version}-linux_amd64.tar.gz"],
+        "aarch64": ["fzf-{version}-linux_arm64.tar.gz"]
+      },
+      "checksum_asset": "fzf_{version}_checksums.txt",
+      "compatibility": "Upstream Linux Go build; validate architecture and probe on the running host."
+    },
+    {
+      "id": "glow", "repository": "charmbracelet/glow", "executable": "glow",
+      "destination": ".local/bin/glow",
+      "version": {"policy": "latest"}, "aliases": [], "profiles": ["local", "work"],
+      "assets": {
+        "x86_64": ["glow_{version}_Linux_x86_64.tar.gz"],
+        "aarch64": ["glow_{version}_Linux_arm64.tar.gz"]
+      },
+      "checksum_asset": "checksums.txt",
+      "compatibility": "Upstream Linux Go build; validate architecture and probe on the running host."
+    },
+    {
+      "id": "ripgrep", "repository": "BurntSushi/ripgrep", "executable": "rg",
+      "destination": ".local/bin/rg",
+      "version": {"policy": "latest"}, "aliases": [], "profiles": ["local", "work"],
+      "assets": {
+        "x86_64": ["ripgrep-{version}-x86_64-unknown-linux-musl.tar.gz"],
+        "aarch64": ["ripgrep-{version}-aarch64-unknown-linux-musl.tar.gz"]
+      },
+      "checksum_asset": "{asset}.sha256",
+      "compatibility": "Upstream Linux musl build; validate architecture and probe before replacement."
+    },
+    {
+      "id": "zoxide", "repository": "ajeetdsouza/zoxide", "executable": "zoxide",
+      "destination": ".local/bin/zoxide",
+      "version": {"policy": "latest"}, "aliases": [], "profiles": ["local", "work"],
+      "assets": {
+        "x86_64": ["zoxide-{version}-x86_64-unknown-linux-musl.tar.gz"],
+        "aarch64": ["zoxide-{version}-aarch64-unknown-linux-musl.tar.gz"]
+      },
+      "compatibility": "Upstream Linux musl build; validate architecture and probe before replacement."
+    }
+  ],
+  "managed_bin_entries": ["setup-host", "update-host", "setup-containers"],
+  "tool_managers": []
+}

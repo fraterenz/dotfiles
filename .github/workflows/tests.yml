@@ -1,0 +1,59 @@
+name: Tests
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  tests:
+    name: ${{ matrix.name }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: Rocky Linux 9
+            distro: rocky9
+            image: docker.io/library/rockylinux:9
+          - name: Fedora 44 (Atomic userspace)
+            distro: fedora44
+            image: quay.io/fedora/fedora:44
+    container:
+      image: ${{ matrix.image }}
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - name: Install test dependencies
+        run: |
+          if [ '${{ matrix.distro }}' = rocky9 ]; then
+            dnf -y install epel-release
+          fi
+          dnf -y install python3 git-core chezmoi podman shadow-utils util-linux
+          test -x /usr/lib/systemd/system-generators/podman-system-generator || test -x /usr/libexec/podman/quadlet
+          if [ '${{ matrix.distro }}' = fedora44 ]; then
+            dnf -y install neovim ripgrep par
+          fi
+          useradd --create-home ci
+
+      - uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Run tests without root privileges
+        env:
+          PYTHONDONTWRITEBYTECODE: '1'
+          CHEZMOI_BIN: /usr/bin/chezmoi
+        run: |
+          runuser -u ci -- bash -c '
+            set -e
+            git config --global --add safe.directory "$GITHUB_WORKSPACE"
+            python3 -m unittest discover -s tests -v
+          '

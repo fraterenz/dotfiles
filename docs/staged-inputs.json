@@ -1,0 +1,16 @@
+[
+  {
+    "original": ".config/containers/ContainerfileDev",
+    "original_sha256": "211372398d3185f156946c5d2c09389a0dac853313308e600f942c917f5568ff",
+    "source": "dot_config/dotfiles/devbox/build/Containerfile.dev",
+    "target": ".config/dotfiles/devbox/build/Containerfile.dev",
+    "source_sha256": "6392c16e1e04b0ad5c470f25444e5020e7b0f4ea3ed36194ac548bf8513b24ef"
+  },
+  {
+    "original": ".config/containers/systemd/dev.container",
+    "original_sha256": "b5963edd80097d9fb6c4dec6e2ba73d46a71f76fe6480dcfcf32b8f314d487cf",
+    "source": "dot_config/dotfiles/devbox/dev.container.tmpl",
+    "target": ".config/dotfiles/devbox/dev.container",
+    "source_sha256": "fb58ea839699a75f8bc9ac8408f93ab34273294ed806c97bf5ea44ca42d572d6"
+  }
+]

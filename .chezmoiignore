@@ -1,0 +1,28 @@
+README.md
+.github
+.github/**
+.ssh
+.ssh/**
+docs
+docs/**
+tests
+tests/**
+chezmoi-migration-plan.md
+.config/containers/systemd/dev.container
+.config/chezmoi
+.config/chezmoi/**
+.config/dotfiles/host-policy.json
+.local/state/dotfiles
+.local/state/dotfiles/**
+.cache/dotfiles
+.cache/dotfiles/**
+Pictures/background.jpg
+**/__pycache__
+**/__pycache__/**
+**/*.pyc
+**/*.pyo
+
+{{ if ne (index . "profile") "local" }}
+.config/sway
+.config/sway/**
+{{ end }}

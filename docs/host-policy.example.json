@@ -1,0 +1,9 @@
+{
+  "approved": false,
+  "dnf": {
+    "repositories": ["replace-with-site-approved-repository-id"],
+    "install_args": ["install", "--assumeyes"],
+    "update_args": ["upgrade", "--refresh", "--assumeyes"]
+  },
+  "flatpak_installations": []
+}

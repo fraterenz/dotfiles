@@ -1,0 +1,18 @@
+# to get info on outputs: `swaymsg -t get_outputs`
+
+# Default for all outputs: 1080p, scale 1
+output * mode 1920x1080 scale 1
+
+# Laptop screen: keep its native 2560x1440 resolution, scale 1
+# Keep this AFTER the wildcard mode rule above.
+output eDP-1 mode 2560x1440 scale 1
+
+# clipboard configuration
+exec_always wl-paste --primary --watch wl-copy
+
+# Wallpaper for all outputs
+{{ if stat (joinPath .chezmoi.destDir "Pictures" "background.jpg") -}}
+output * background ~/Pictures/background.jpg fill
+{{ else -}}
+output * background #f6f2ee solid_color
+{{ end -}}

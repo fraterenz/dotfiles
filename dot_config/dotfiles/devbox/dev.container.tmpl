@@ -1,0 +1,46 @@
+[Unit]
+Description=Development container
+
+[Container]
+# setup-containers replaces this staging reference with an immutable local ID.
+Image=localhost/devbox:managed
+Pull=never
+PodmanArgs=--replace=false
+ContainerName=dev
+HostName=dev
+UserNS=keep-id
+DropCapability=all
+NoNewPrivileges=true
+
+Volume={{ default "%h/dev" (index . "devWorkspace") }}:/home/dev:Z
+Volume=%h/.config/nvim:/home/dev/.config/nvim:ro,Z
+Volume=%h/.config/fish/config.fish:/home/dev/.config/fish/config.fish:ro,Z
+Volume=%h/.config/fish/conf.d/fish_frozen_theme.fish:/home/dev/.config/fish/conf.d/fish_frozen_theme.fish:ro,Z
+Volume=%h/.config/fish/functions/fish_prompt.fish:/home/dev/.config/fish/functions/fish_prompt.fish:ro,Z
+Volume=%h/.config/fish/functions/clc.fish:/home/dev/.config/fish/functions/clc.fish:ro,Z
+Volume=%h/.config/fish/functions/clippy.fish:/home/dev/.config/fish/functions/clippy.fish:ro,Z
+Volume=%h/.config/fish/functions/l.fish:/home/dev/.config/fish/functions/l.fish:ro,Z
+Volume=%h/.config/fish/functions/la.fish:/home/dev/.config/fish/functions/la.fish:ro,Z
+Volume=%h/.config/fish/functions/ll.fish:/home/dev/.config/fish/functions/ll.fish:ro,Z
+Volume=%h/.config/fish/functions/lla.fish:/home/dev/.config/fish/functions/lla.fish:ro,Z
+Volume=%h/.config/fish/functions/rm.fish:/home/dev/.config/fish/functions/rm.fish:ro,Z
+Volume=%h/.config/fish/themes/dayfox.theme:/home/dev/.config/fish/themes/dayfox.theme:ro,Z
+Volume=%h/.config/bat:/home/dev/.config/bat:ro,Z
+Volume=%h/.gitconfig:/home/dev/.gitconfig:ro,Z
+
+PublishPort=127.0.0.1:8888:8888
+Environment=HOME=/home/dev
+WorkingDir=/home/dev
+
+RunInit=true
+Exec=/usr/bin/sleep infinity
+
+[Service]
+Restart=on-failure
+TimeoutStartSec=300
+
+[Install]
+WantedBy=default.target
+
+[Quadlet]
+DefaultDependencies=false
