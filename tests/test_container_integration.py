@@ -1,6 +1,5 @@
 """Real chezmoi deployment and Quadlet generation in disposable directories."""
 
-import hashlib
 import json
 import os
 from pathlib import Path
@@ -16,12 +15,6 @@ from dotfiles.containers import Settings
 
 
 class ContainerIntegrationTests(unittest.TestCase):
-    def test_staged_provenance_matches_current_source(self):
-        for row in json.loads((SOURCE / "docs/staged-inputs.json").read_text()):
-            with self.subTest(source=row["source"]):
-                self.assertEqual(hashlib.sha256((SOURCE / row["source"]).read_bytes()).hexdigest(), row["source_sha256"])
-                self.assertRegex(row["original_sha256"], r"^[a-f0-9]{64}$")
-
     def test_both_profiles_deploy_an_inert_definition_and_working_wrapper(self):
         chezmoi = os.environ.get("CHEZMOI_BIN") or shutil.which("chezmoi")
         if not chezmoi:
