@@ -1,0 +1,12 @@
+[Unit]
+Description=Ghostty terminal for the host
+PartOf=graphical-session.target
+After=graphical-session.target
+
+[Service]
+Type=exec
+ExecStart=/usr/bin/ghostty --gtk-single-instance=false --class=com.mitchellh.ghostty.host --working-directory=home
+Restart=no
+
+[Install]
+WantedBy=sway-session.target

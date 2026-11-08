@@ -1,0 +1,13 @@
+[Unit]
+Description=Firefox with the francesco profile
+PartOf=graphical-session.target
+After=graphical-session.target
+
+[Service]
+Type=exec
+Environment=MOZ_ENABLE_WAYLAND=1
+ExecStart=/usr/bin/firefox --new-instance -P "default-release" --name=firefox-normal
+Restart=no
+
+[Install]
+WantedBy=sway-session.target

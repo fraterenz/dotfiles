@@ -1,0 +1,13 @@
+[Unit]
+Description=Ghostty terminal for the dev container
+PartOf=graphical-session.target
+Requires=dev.service
+After=graphical-session.target dev.service
+
+[Service]
+Type=exec
+ExecStart=/usr/bin/ghostty --gtk-single-instance=false --class=com.mitchellh.ghostty.dev -e /usr/bin/podman exec -it dev /usr/bin/fish -l
+Restart=no
+
+[Install]
+WantedBy=sway-session.target

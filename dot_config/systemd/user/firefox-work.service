@@ -1,0 +1,13 @@
+[Unit]
+Description=Firefox with the work profile
+PartOf=graphical-session.target
+After=graphical-session.target
+
+[Service]
+Type=exec
+Environment=MOZ_ENABLE_WAYLAND=1
+ExecStart=/usr/bin/firefox --new-instance -P "work" --name=firefox-work
+Restart=no
+
+[Install]
+WantedBy=sway-session.target

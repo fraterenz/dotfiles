@@ -8,7 +8,7 @@ output * mode 1920x1080 scale 1
 output eDP-1 mode 2560x1440 scale 1
 
 # clipboard configuration
-exec_always wl-paste --primary --watch wl-copy
+exec wl-paste --primary --watch wl-copy
 
 # Wallpaper for all outputs
 {{ if stat (joinPath .chezmoi.destDir "Pictures" "background.jpg") -}}
