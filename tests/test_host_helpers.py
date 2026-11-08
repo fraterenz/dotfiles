@@ -57,6 +57,9 @@ class FakeRunner:
     def emit(self, message):
         self.messages.append(message)
 
+    def check_cancelled(self):
+        pass
+
     def capture(self, argv, check=True, timeout=60):
         self.events.append(("query", list(argv)))
         if argv[0] == "rpm":
@@ -85,6 +88,8 @@ class FakeRunner:
             self.pending = [{"booted": False, "staged": True, "requested-packages": argv[3:]}]
         if argv[:2] == ["rpm-ostree", "upgrade"]:
             self.pending = [{"booted": False, "staged": True, "requested-packages": []}]
+        if argv[:2] == ["sudo", "/usr/bin/dnf"] and "install" in argv:
+            self.missing.difference_update(argv[argv.index("install") + 1:])
 
 
 def elf(version="2.0.0", machine=62):
@@ -234,26 +239,6 @@ class HostPhaseTests(unittest.TestCase):
         manager.updater = SimpleNamespace(reconcile=lambda tool, update=False: runner.events.append(("tool", tool["id"])))
         return manager
 
-    def test_native_and_all_flatpaks_precede_user_tools(self):
-        with scratch() as tmp:
-            runner = FakeRunner()
-            manager = self.make_manager(tmp, runner)
-            manager.run(update=True)
-            events = [e for e in runner.events if e[0] in ("action", "tool")]
-            self.assertEqual(events[0], ("action", ["rpm-ostree", "upgrade"]))
-            self.assertEqual([e[1][2] for e in events[1:3]], ["--user", "--system"])
-            self.assertTrue(all(e[0] == "tool" for e in events[3:]))
-
-    def test_failed_host_step_blocks_all_user_tool_activity(self):
-        for fail in (lambda a: a[0] == "rpm-ostree", lambda a: a[0] == "flatpak" and "--system" in a):
-            with self.subTest(fail=fail), scratch() as tmp:
-                runner = FakeRunner()
-                runner.fail_action = fail
-                manager = self.make_manager(tmp, runner)
-                with self.assertRaises(Error):
-                    manager.run(update=True)
-                self.assertFalse(any(e[0] == "tool" for e in runner.events))
-
     def test_atomic_reboot_checkpoint_and_pending_rerun(self):
         with scratch() as tmp:
             runner = FakeRunner()
@@ -299,7 +284,7 @@ class HostPhaseTests(unittest.TestCase):
             unknown.parent.mkdir(parents=True)
             unknown.write_text("do not execute or replace")
             with self.assertRaisesRegex(Error, "incomplete"):
-                manager.user_tools(update=True)
+                manager.user_tools()
             self.assertEqual(unknown.read_text(), "do not execute or replace")
             self.assertTrue(any("Unregistered" in m for m in runner.messages))
 
@@ -308,42 +293,29 @@ class HostPhaseTests(unittest.TestCase):
             runner = FakeRunner()
             manager = self.make_manager(tmp, runner, "work")
             with self.assertRaises(ConfigurationError):
-                manager.run(update=True)
+                manager.run()
             self.assertEqual(runner.events, [])
 
     def test_work_uses_only_explicit_approved_repositories(self):
         with scratch() as tmp:
             runner = FakeRunner()
+            runner.missing = {"fish"}
             manager = self.make_manager(tmp, runner, "work")
             manager.repo_directory.mkdir()
             (manager.repo_directory / "site.repo").write_text('[approved]\nenabled=1\n[other]\nenabled=0\n')
             manager.policy_path.write_text(json.dumps({"approved": True, "dnf": {"repositories": ["approved"], "install_args": ["install", "-y"], "update_args": ["upgrade", "--security", "-y"]}, "flatpak_installations": []}))
             manager.policy_path.chmod(0o600)
-            manager.run(update=True)
+            manager.run()
             action = next(e[1] for e in runner.events if e[0] == "action")
-            self.assertEqual(action, ["sudo", "/usr/bin/dnf", "--disablerepo=*", "--enablerepo=approved", "upgrade", "--security", "-y"])
+            self.assertEqual(action, ["sudo", "/usr/bin/dnf", "--disablerepo=*", "--enablerepo=approved", "install", "-y", "fish"])
 
-    def test_manager_is_delegated_once_after_host_steps(self):
+    def test_setup_manager_is_delegated_once_for_missing_entries(self):
         with scratch() as tmp:
-            runner = FakeRunner()
+            runner = FakeRunner(dry_run=True)
             manager = self.make_manager(tmp, runner)
             manager.manifest.managers = [{"id": "example-manager", "entries": ["managed-tool", "managed-alias"], "install_argv": ["example-manager", "install"], "update_argv": ["example-manager", "update"]}]
-            directory = manager.home / ".local/bin"
-            directory.mkdir(parents=True)
-            (directory / "managed-tool").write_text("owned by manager")
-            (directory / "managed-alias").symlink_to("managed-tool")
-            manager.run(update=True)
-            self.assertEqual(sum(e == ("action", ["example-manager", "update"]) for e in runner.events), 1)
-
-    def test_named_flatpak_installations_are_all_updated_before_user_tools(self):
-        with scratch() as tmp:
-            runner = FakeRunner()
-            manager = self.make_manager(tmp, runner)
-            manager.manifest.installations.append({"id": "extra", "scope": "system", "name": "extra"})
-            manager.run(update=True)
-            events = [e for e in runner.events if e[0] in ("action", "tool")]
-            self.assertEqual(events[3], ("action", ["flatpak", "update", "--installation=extra", "--noninteractive", "--assumeyes"]))
-            self.assertEqual(events[4][0], "tool")
+            manager.run()
+            self.assertEqual(sum(e == ("action", ["example-manager", "install"]) for e in runner.events), 1)
 
     def test_unapproved_work_flatpak_scope_blocks_before_any_action(self):
         with scratch() as tmp:
@@ -352,7 +324,7 @@ class HostPhaseTests(unittest.TestCase):
             manager.manifest.installations.append({"id": "user", "scope": "user"})
             manager.policy_path.write_text(json.dumps({"approved": True, "dnf": {"repositories": ["approved"], "install_args": ["install", "-y"], "update_args": ["upgrade", "-y"]}, "flatpak_installations": []}))
             with self.assertRaisesRegex(ConfigurationError, "Flatpak"):
-                manager.run(update=True)
+                manager.run()
             self.assertEqual(runner.events, [])
 
 
@@ -610,7 +582,7 @@ class ChezmoiHostIntegrationTests(unittest.TestCase):
                 (home / ".local").chmod(0o700)
                 shutil.copy2(SOURCE / ".chezmoiignore", source / ".chezmoiignore")
                 files = [SOURCE / "dot_config/dotfiles/software.json.tmpl"]
-                files += list((SOURCE / "private_dot_local/lib/dotfiles_host").glob("*.py"))
+                files += list((SOURCE / "private_dot_local/lib/dotfiles_host").rglob("*.py"))
                 files += list((SOURCE / "private_dot_local/lib/dotfiles").glob("*.py"))
                 names = ("setup-host", "update-host", "setup-containers")
                 files += [SOURCE / "private_dot_local/bin" / ("executable_" + name + ".tmpl") for name in names]
@@ -637,6 +609,11 @@ class ChezmoiHostIntegrationTests(unittest.TestCase):
                     # this fixture deliberately does not install another uv.
                     helped = subprocess.run([sys.executable, str(executable), "--help"], capture_output=True, text=True)
                     self.assertEqual(helped.returncode, 0, helped.stderr)
+                    if name == "update-host":
+                        self.assertTrue((home / ".local/lib/dotfiles_host/updates/operations.py").is_file())
+                        for flag in ("--all", "--flatpak", "--user-tools", "--rpm-ostree"):
+                            self.assertIn(flag, helped.stdout)
+                        self.assertNotIn("--jobs", helped.stdout)
 
 
 class CLITests(unittest.TestCase):

@@ -40,11 +40,13 @@ class SafeRedirect(urllib.request.HTTPRedirectHandler):
 
 
 class GitHub:
-    def __init__(self, token=None):
+    def __init__(self, token=None, *, check_cancelled=None):
         self.token = token if token is not None else os.environ.get("GITHUB_TOKEN")
         self.opener = urllib.request.build_opener(SafeRedirect())
+        self.check_cancelled = check_cancelled or (lambda: None)
 
     def open(self, url):
+        self.check_cancelled()
         parsed = urllib.parse.urlsplit(url)
         if parsed.scheme != "https" or parsed.username or parsed.password:
             raise Error("Only credential-free HTTPS release URLs are accepted")
@@ -65,6 +67,7 @@ class GitHub:
         try:
             with self.open(url) as stream:
                 payload = stream.read(4 * 1024 * 1024 + 1)
+            self.check_cancelled()
         except (OSError, http.client.HTTPException) as exc:
             raise Error("Release metadata download was interrupted") from exc
         if len(payload) > 4 * 1024 * 1024:
@@ -89,10 +92,12 @@ class GitHub:
         if not isinstance(size, int) or not 0 < size <= MAX_ARCHIVE:
             raise Error("Unexpected release-asset size")
         for attempt in range(3):
+            self.check_cancelled()
             try:
                 with self.open(asset["browser_download_url"]) as stream, Path(target).open("wb") as output:
                     count = 0
                     while True:
+                        self.check_cancelled()
                         block = stream.read(1024 * 1024)
                         if not block:
                             break
@@ -102,6 +107,7 @@ class GitHub:
                         output.write(block)
                 if count != size:
                     raise Error("Incomplete release download; installed binary was not touched")
+                self.check_cancelled()
                 return
             except (OSError, http.client.HTTPException, Error) as exc:
                 if attempt == 2:
@@ -114,6 +120,7 @@ class GitHub:
         try:
             with self.open(asset["browser_download_url"]) as stream:
                 data = stream.read(asset["size"] + 1)
+            self.check_cancelled()
         except (OSError, http.client.HTTPException) as exc:
             raise Error("Upstream checksum download was interrupted") from exc
         if len(data) != asset["size"]:
@@ -250,7 +257,7 @@ def snapshot(path):
 class ToolUpdater:
     def __init__(self, home, state, host, runner, client=None):
         self.home, self.state, self.host, self.runner = Path(home), Path(state), host, runner
-        self.client = client or GitHub()
+        self.client = client or GitHub(check_cancelled=runner.check_cancelled)
 
     def target(self, tool):
         target = self.home / destination(tool)
@@ -270,6 +277,7 @@ class ToolUpdater:
     def aliases(self, tool, target):
         self.check_aliases(tool, target)
         for name in tool["aliases"]:
+            self.runner.check_cancelled()
             alias = target.parent / name
             if os.path.lexists(alias):
                 continue
@@ -279,6 +287,7 @@ class ToolUpdater:
                 alias.symlink_to(target.name)
 
     def reconcile(self, tool, update=False):
+        self.runner.check_cancelled()
         target = self.target(tool)
         before = snapshot(target)
         self.check_aliases(tool, target)
@@ -286,7 +295,7 @@ class ToolUpdater:
         policy = tool["version"]
         pin = policy["tag"].lstrip("v") if policy["policy"] == "pinned" else None
         if installed and not update and pin is not None and installed != pin:
-            raise Error("{} differs from its pin; run update-host to reconcile after host updates".format(tool["id"]))
+            raise Error("{} differs from its pin; run update-host --user-tools to reconcile".format(tool["id"]))
         if installed and (not update or installed == pin):
             self.runner.emit("{}: already installed ({})".format(tool["id"], installed))
             self.aliases(tool, target)
@@ -299,6 +308,7 @@ class ToolUpdater:
             return
         asset = select_asset(tool, release, self.host.architecture)
         digest = expected_digest(tool, release, asset, self.client)
+        self.runner.check_cancelled()
         if self.runner.dry_run:
             self.runner.emit("Would install {} {} at {} ({}; SHA256 available, archive not downloaded)".format(tool["id"], version, target, asset["name"]))
             self.aliases(tool, target)
@@ -307,12 +317,14 @@ class ToolUpdater:
         self.aliases(tool, target)
 
     def install(self, tool, target, before, installed, version, asset, digest):
+        self.runner.check_cancelled()
         target.parent.mkdir(parents=True, exist_ok=True)
         with tempfile.TemporaryDirectory(prefix=".dotfiles-" + tool["id"] + "-", dir=str(target.parent)) as directory:
             directory = Path(directory)
             archive, candidate = directory / "release.tar.gz", directory / "candidate"
             self.runner.emit("Downloading {} {} from {}".format(tool["id"], version, tool["repository"]))
             self.client.download(asset, archive)
+            self.runner.check_cancelled()
             if archive.stat().st_size != asset["size"] or sha256(archive) != digest:
                 raise Error("Release archive failed size/SHA256 verification; installed binary retained")
             extract_executable(archive, tool["executable"], candidate)
@@ -345,6 +357,7 @@ class ToolUpdater:
             }
             record_payload = (json.dumps(record, indent=2) + "\n").encode("utf-8")
             try:
+                self.runner.check_cancelled()
                 if snapshot(target) != before or snapshot(record_path) != record_before:
                     raise Error("Tool or install record changed while creating its backup; refusing replacement")
                 if before is None:

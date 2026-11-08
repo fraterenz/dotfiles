@@ -1,14 +1,13 @@
-"""Package/Flatpak phases and strictly ordered user-tool reconciliation."""
+"""Host setup and its native-package/reboot prerequisites."""
 
 import configparser
-import json
-import os
 from pathlib import Path
 import shutil
 
-from .core import CompatibilityError, ConfigurationError, Error, RebootRequired
+from .core import ConfigurationError, Error, RebootRequired
 from .downloads import ToolUpdater
-from .manifest import destination, work_policy
+from .manifest import work_policy
+from .updates.operations import atomic_status, flatpak_flags, reconcile_user_tools, unknown_entries
 
 
 def enabled_repositories(directory=Path("/etc/yum.repos.d")):
@@ -26,26 +25,6 @@ def enabled_repositories(directory=Path("/etc/yum.repos.d")):
     return enabled
 
 
-def atomic_status(runner):
-    try:
-        status = json.loads(runner.capture(["rpm-ostree", "status", "--json"]).stdout)
-        deployments = status["deployments"]
-        booted = [i for i, d in enumerate(deployments) if d.get("booted")]
-        if len(booted) != 1:
-            raise ValueError("Missing/ambiguous booted deployment")
-        pending = [d for i, d in enumerate(deployments) if not d.get("booted") and (d.get("staged") or i < booted[0])]
-        requested = {name for d in pending for name in d.get("requested-packages", [])}
-        return bool(pending), requested
-    except (ValueError, KeyError, TypeError) as exc:
-        raise Error("Cannot interpret rpm-ostree deployment status") from exc
-
-
-def flatpak_flags(installation):
-    if installation.get("name"):
-        return ["--installation=" + installation["name"]]
-    return ["--" + installation["scope"]]
-
-
 class HostManager:
     def __init__(self, manifest, host, runner, home, state, policy_path, client=None, repo_directory=Path("/etc/yum.repos.d")):
         self.manifest, self.host, self.runner = manifest, host, runner
@@ -59,11 +38,6 @@ class HostManager:
     def authorize(self):
         if self.host.profile != "work":
             return
-        if not self.policy_path.is_file():
-            raise ConfigurationError("Work operations are blocked: create machine-local host-policy.json after site approval")
-        info = self.policy_path.stat()
-        if info.st_uid not in (0, os.getuid()) or info.st_mode & 0o022:
-            raise ConfigurationError("Work policy must be owned by this user/root and not group/world writable")
         self.policy = work_policy(self.policy_path, self.manifest)
         absent = set(self.policy["dnf"]["repositories"]) - enabled_repositories(self.repo_directory)
         if absent:
@@ -108,17 +82,7 @@ class HostManager:
             if not self.runner.dry_run and any(not self.package_installed(p["name"]) for p in missing):
                 raise Error("Native installation did not provide every required RPM")
 
-    def update_native(self):
-        if self.host.profile == "local":
-            self.runner.action(["rpm-ostree", "upgrade"])
-            self.pending_reboot, _ = atomic_status(self.runner)
-            if self.pending_reboot:
-                self.runner.emit("System update is staged for a manual reboot; user binaries must run on the currently booted host.")
-        else:
-            self.runner.action(self.dnf_command("update"))
-            self.runner.emit("Follow the site's service-restart/reboot procedure; no reboot is performed automatically.")
-
-    def flatpaks(self, update=False):
+    def flatpaks(self):
         if not self.manifest.installations:
             return
         available = bool(shutil.which("flatpak"))
@@ -129,9 +93,6 @@ class HostManager:
                 raise Error("Flatpak is not usable after native setup")
         for installation in self.manifest.installations:
             flags = flatpak_flags(installation)
-            if update:
-                self.runner.action(["flatpak", "update"] + flags + ["--noninteractive", "--assumeyes"])
-                continue
             apps = [a for a in self.manifest.apps if a["installation"] == installation["id"]]
             if not apps:
                 continue
@@ -148,50 +109,18 @@ class HostManager:
                 self.runner.action(["flatpak", "install"] + flags + ["--noninteractive", "--assumeyes", app["remote"], app["id"]])
 
     def unknown_entries(self):
-        known = set(self.manifest.managed)
-        for tool in self.manifest.tools:
-            relative = Path(destination(tool))
-            if relative.parent == Path(".local/bin"):
-                known.update([tool["executable"]] + tool["aliases"])
-        for manager in self.manifest.managers:
-            known.update(manager["entries"])
-        directory = self.home / ".local/bin"
-        return sorted(p.name for p in directory.iterdir() if p.name not in known) if directory.is_dir() else []
+        return unknown_entries(self.manifest, self.home)
 
-    def user_tools(self, update=False):
-        failures = []
-        for entry in self.unknown_entries():
-            self.runner.emit("Unregistered local-bin entry (left untouched): {!r}".format(entry))
-            failures.append("unregistered entry")
-        for tool in self.manifest.tools:
-            try:
-                self.updater.reconcile(tool, update=update)
-            except (Error, OSError) as exc:
-                self.runner.emit("{}: {}".format(tool["id"], exc))
-                if isinstance(exc, CompatibilityError) and self.pending_reboot:
-                    self.runner.emit("Replacement deferred: reboot into the pending deployment and rerun update-host.")
-                failures.append(tool["id"])
-        for manager in self.manifest.managers:
-            missing = any(not os.path.lexists(self.home / ".local/bin" / entry) for entry in manager["entries"])
-            if not update and not missing:
-                continue
-            try:
-                self.runner.action(manager["update_argv"] if update else manager["install_argv"])
-                if not self.runner.dry_run and any(not os.path.lexists(self.home / ".local/bin" / entry) for entry in manager["entries"]):
-                    raise Error("Manager did not provide its declared entries")
-            except Error as exc:
-                self.runner.emit("{}: {}".format(manager["id"], exc))
-                failures.append(manager["id"])
-        if failures:
-            raise Error("User-tool phase incomplete ({}); working installations were retained where replacement failed".format(", ".join(failures)))
+    def user_tools(self):
+        reconcile_user_tools(
+            manifest=self.manifest, home=self.home, runner=self.runner,
+            updater=self.updater, update=False, pending_reboot=self.pending_reboot,
+        )
 
-    def run(self, update=False):
+    def run(self):
         self.authorize()
-        if update:
-            self.update_native()
-        else:
-            self.setup_native()
-        # Exceptions in either required host phase stop all user-tool updates.
-        self.flatpaks(update=update)
-        self.user_tools(update=update)
-        self.runner.emit("Dry run complete; no changes made." if self.runner.dry_run else "Host update complete." if update else "Host setup complete.")
+        self.setup_native()
+        # Setup retains its prerequisites; updates use the independent executor.
+        self.flatpaks()
+        self.user_tools()
+        self.runner.emit("Dry run complete; no changes made." if self.runner.dry_run else "Host setup complete.")

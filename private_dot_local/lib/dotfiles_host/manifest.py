@@ -1,6 +1,7 @@
 """Validate desired software and keep machine-local permission policy separate."""
 
-from pathlib import PurePosixPath
+import os
+from pathlib import Path, PurePosixPath
 import re
 
 from .core import ConfigurationError, read_json
@@ -172,9 +173,21 @@ class Manifest:
             raise ConfigurationError("Malformed software manifest record") from exc
 
 
-def work_policy(path, manifest):
+def work_approval(path):
+    """Validate site approval independently of native/Flatpak setup policy."""
+    path = Path(path)
+    if not path.is_file():
+        raise ConfigurationError("Work operations are blocked: create machine-local host-policy.json after site approval")
+    info = path.stat()
+    require(info.st_uid in (0, os.getuid()) and not info.st_mode & 0o022,
+            "Work policy must be owned by this user/root and not group/world writable")
     policy = read_json(path)
     require(isinstance(policy, dict) and policy.get("approved") is True, "Work operations require recorded site approval in host-policy.json")
+    return policy
+
+
+def work_policy(path, manifest):
+    policy = work_approval(path)
     dnf = policy.get("dnf", {})
     require(isinstance(dnf, dict), "Invalid site dnf policy")
     repos = entries(dnf.get("repositories"))

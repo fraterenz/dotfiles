@@ -47,20 +47,22 @@ Development toolchains belong in the [devbox](#devbox), not the host OS layer.
 
 ## Work profile: Rocky Linux 9
 
-The `work` profile uses the site's package-management policy rather than Atomic
-deployments. Existing Sway and desktop configuration are left untouched.
+The `work` profile leaves OS updates to the cluster administrator. Existing Sway
+and desktop configuration are left untouched.
 
 | Software category | How it is managed |
 | --- | --- |
-| **System packages** | DNF, restricted to explicitly approved repositories and options. |
-| **Flatpak** | No installations or applications are configured by default. |
+| **System packages** | Updates are cluster-managed. `setup-host` can install missing packages using explicitly approved DNF repositories and options. |
+| **Flatpak** | Excluded from `update-host`; no installations or applications are configured by default. |
 | **User binaries** | Standalone tools in `~/.local/bin`, with uv and helper launchers managed by chezmoi. |
 
 Host operations, including dry runs, require site approval recorded in a private
 local policy.
 
-After obtaining approval, copy the example and fill in the approved repositories
-and Flatpak scopes. Set `approved` to `true` only with site permission:
+After obtaining approval, copy the example. For `setup-host`, fill in the
+approved repositories and Flatpak scopes. `update-host` updates only user tools
+and requires recorded approval and secure policy ownership/permissions, not
+DNF/Flatpak settings. Set `approved` to `true` only with site permission:
 
 ```sh
 cp ~/.local/share/chezmoi/docs/host-policy.example.json ~/.config/dotfiles/host-policy.json
@@ -77,10 +79,23 @@ After completing the prerequisites for your profile, use the shared helpers in
 | Command | Purpose |
 | --- | --- |
 | `setup-host` | Install missing software declared for the selected profile. |
-| `update-host` | Update host software across the configured layers. |
+| `update-host` | Update all permitted phases, or select them using additive flags. |
 
 Review `setup-host --dry-run` before the first setup. Both commands support
 `--help` for options.
+
+```sh
+update-host --flatpak --user-tools  # Local: both concurrently, no OS update
+update-host --rpm-ostree            # Local: stage an OS update only
+update-host --user-tools            # Either profile: registered user tools only
+update-host --all --dry-run         # Review every update permitted by the profile
+```
+
+With no selectors, `update-host` updates all permitted phases. On local hosts,
+Flatpak and user tools run concurrently, then rpm-ostree runs last. On work
+hosts, only user tools are available. Expected failures do not block independent
+updates; the final report exits nonzero if any failed. See
+[update behaviour and Python API](docs/updates.md) for details.
 
 To change the software selection, edit the
 [software manifest](dot_config/dotfiles/software.json.tmpl) through chezmoi,
@@ -129,6 +144,11 @@ every managed interpreter. System-Python updates remain OS-managed.
 The launchers use `--no-config` to ignore discovered uv configuration and
 Python-version files. Inherited environment variables still apply, including
 intentional site settings.
+
+uv can download a compatible Python and prepare cached environments before the
+helper starts. `--dry-run` suppresses helper operations, not this runtime
+preparation. Obtain work-site approval for uv/Python downloads before launching
+helpers; Python-level policy checks happen afterward.
 
 ## Development
 
