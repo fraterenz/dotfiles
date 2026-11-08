@@ -18,12 +18,14 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          - name: Rocky Linux 9
+          - name: Rocky Linux 9 / Python 3.12
             distro: rocky9
             image: docker.io/library/rockylinux:9
-          - name: Fedora 44 (Atomic userspace)
+            python: '3.12'
+          - name: Fedora 44 (Atomic userspace) / Python 3.14
             distro: fedora44
             image: quay.io/fedora/fedora:44
+            python: '3.14'
     container:
       image: ${{ matrix.image }}
     defaults:
@@ -51,9 +53,21 @@ jobs:
         env:
           PYTHONDONTWRITEBYTECODE: '1'
           CHEZMOI_BIN: /usr/bin/chezmoi
+          TEST_PYTHON: ${{ matrix.python }}
         run: |
           runuser -u ci -- bash -c '
             set -e
             git config --global --add safe.directory "$GITHUB_WORKSPACE"
-            python3 -m unittest discover -s tests -v
+            uv_destination=$(mktemp -d)
+            # Install only uv in a disposable destination using the production
+            # version, archive and checksum. Do not deploy the other dotfiles.
+            chezmoi --source "$GITHUB_WORKSPACE" \
+              --destination "$uv_destination" \
+              --config "$uv_destination/chezmoi.toml" \
+              --cache "$uv_destination/cache" \
+              --persistent-state "$uv_destination/state.boltdb" \
+              --override-data "{\"profile\":\"local\",\"gitName\":\"CI\",\"gitEmail\":\"ci@example.invalid\"}" \
+              apply --parent-dirs "$uv_destination/.local/bin/uv"
+            "$uv_destination/.local/bin/uv" run --no-config --no-project \
+              --python "$TEST_PYTHON" python -m unittest discover -s tests -v
           '

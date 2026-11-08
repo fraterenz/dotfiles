@@ -1,0 +1,15 @@
+{{- $version := "0.13.7" -}}
+{{- $archives := dict
+    "amd64" (dict "target" "x86_64-unknown-linux-musl" "sha256" "287491da03f2a785c70fa75b13e1f849918c2f2b5415fe84876b8214eeb792f9")
+    "arm64" (dict "target" "aarch64-unknown-linux-musl" "sha256" "2d3ec076a0c4c0e8250bb6418c44080828b544f1a3be0b6e46adf9fb6923de45")
+-}}
+{{- if or (ne .chezmoi.os "linux") (not (hasKey $archives .chezmoi.arch)) -}}
+{{- fail "uv is configured only for Linux amd64 and arm64" -}}
+{{- end -}}
+{{- $archive := index $archives .chezmoi.arch -}}
+[".local/bin/uv"]
+    type = "archive-file"
+    url = "https://github.com/astral-sh/uv/releases/download/{{ $version }}/uv-{{ $archive.target }}.tar.gz"
+    checksum.sha256 = {{ $archive.sha256 | quote }}
+    path = "uv-{{ $archive.target }}/uv"
+    executable = true

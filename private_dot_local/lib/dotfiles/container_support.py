@@ -1,6 +1,6 @@
 """Safe file/state primitives and the deliberately narrow Quadlet input model.
 
-Compatible with the Python 3.9 standard library. No package installation,
+Uses the Python 3.12+ standard library. No package installation,
 uninstallation, pruning, or host OpenCode operations belong in this module.
 """
 

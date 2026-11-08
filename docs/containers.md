@@ -1,9 +1,16 @@
 # Explicit devbox lifecycle
 
-`setup-containers` is a Python 3.9+ standard-library helper for one rootless
+`setup-containers` is a Python 3.12+ standard-library helper for one rootless
 `dev` container and its generated `dev.service`. It does not install packages,
 use sudo, enable generated services, manage host OpenCode, or prune images/data.
 Applying chezmoi files never invokes it.
+
+Its launcher uses the absolute chezmoi-managed uv executable. uv finds or
+downloads a compatible Python and prepares its cached script environment before
+the helper starts, including for `--help` and `--dry-run`. Dry runs prevent the
+helper's operational changes, not uv runtime/cache preparation. Obtain work-site
+approval for those downloads before launching; container image/runtime policy
+and the system Python inside the container remain unchanged.
 
 Host and container helpers share command execution, OS detection, file locking,
 and durable writes in `~/.local/lib/dotfiles/common.py`. Their operational locks

@@ -1,1 +1,1 @@
-"""Standard-library host provisioning helpers (Python 3.9+)."""
+"""Standard-library host provisioning helpers (Python 3.12+)."""

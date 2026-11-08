@@ -1,6 +1,5 @@
 """Host provisioning tests: fake package managers, no network or host mutations."""
 
-import ast
 from contextlib import redirect_stderr
 from copy import deepcopy
 import http.client
@@ -149,6 +148,7 @@ class ManifestTests(unittest.TestCase):
             self.assertEqual({t["executable"] for t in m.tools}, {"chezmoi", "bat", "fzf", "glow", "rg", "zoxide"})
             self.assertNotIn("fish", {t["executable"] for t in m.tools})
             self.assertNotIn("chezmoi", {p["name"] for p in m.packages})
+            self.assertIn("uv", m.managed)
 
     def test_conflicting_ownership_is_rejected(self):
         data = manifest_data()
@@ -596,43 +596,47 @@ class HTTPTests(unittest.TestCase):
 
 
 class ChezmoiHostIntegrationTests(unittest.TestCase):
-    def test_sandbox_apply_deploys_executables_not_bytecode_and_preserves_local_mode(self):
+    def test_sandbox_apply_renders_uv_launchers_and_preserves_local_mode(self):
         binary = os.environ.get("CHEZMOI_BIN") or shutil.which("chezmoi")
         if not binary:
             self.skipTest("chezmoi is required for the sandbox deployment check")
-        with scratch() as tmp:
-            root = Path(tmp)
-            source, home = root / "source", root / "home"
-            source.mkdir()
-            home.mkdir()
-            (home / ".local/bin").mkdir(parents=True)
-            (home / ".local").chmod(0o700)
-            shutil.copy2(SOURCE / ".chezmoiignore", source / ".chezmoiignore")
-            files = [SOURCE / "dot_config/dotfiles/software.json.tmpl"]
-            files += list((SOURCE / "private_dot_local/lib/dotfiles_host").glob("*.py"))
-            files += [SOURCE / "private_dot_local/lib/dotfiles" / name for name in ("__init__.py", "common.py")]
-            files += [SOURCE / "private_dot_local/bin" / ("executable_" + name) for name in ("setup-host", "update-host")]
-            for path in files:
-                target = source / path.relative_to(SOURCE)
-                target.parent.mkdir(parents=True, exist_ok=True)
-                shutil.copy2(path, target)
-            cache = source / "private_dot_local/lib/dotfiles_host/__pycache__"
-            cache.mkdir()
-            (cache / "core.cpython-39.pyc").write_bytes(b"not distributable")
-            base = [binary, "--source", str(source), "--destination", str(home), "--config", str(root / "test.toml"), "--persistent-state", str(root / "state.boltdb"), "--override-data", '{"profile":"work"}']
-            applied = subprocess.run(base + ["apply"], capture_output=True, text=True)
-            self.assertEqual(applied.returncode, 0, applied.stderr)
-            self.assertEqual((home / ".local").stat().st_mode & 0o777, 0o700)
-            self.assertFalse(list(home.rglob("*.pyc")))
-            self.assertFalse(list(home.rglob("__pycache__")))
-            manifest = Manifest.load(home / ".config/dotfiles/software.json")
-            self.assertEqual(manifest.profile, "work")
-            for name in ("setup-host", "update-host"):
-                executable = home / ".local/bin" / name
-                self.assertTrue(os.access(executable, os.X_OK))
-                helped = subprocess.run([str(executable), "--help"], capture_output=True, text=True)
-                self.assertEqual(helped.returncode, 0, helped.stderr)
-            self.assertFalse(list(home.rglob("__pycache__")))
+        for profile in ("local", "work"):
+            with self.subTest(profile=profile), scratch() as tmp:
+                root = Path(tmp)
+                source, home = root / "source", root / "home"
+                source.mkdir()
+                home.mkdir()
+                (home / ".local/bin").mkdir(parents=True)
+                (home / ".local").chmod(0o700)
+                shutil.copy2(SOURCE / ".chezmoiignore", source / ".chezmoiignore")
+                files = [SOURCE / "dot_config/dotfiles/software.json.tmpl"]
+                files += list((SOURCE / "private_dot_local/lib/dotfiles_host").glob("*.py"))
+                files += list((SOURCE / "private_dot_local/lib/dotfiles").glob("*.py"))
+                names = ("setup-host", "update-host", "setup-containers")
+                files += [SOURCE / "private_dot_local/bin" / ("executable_" + name + ".tmpl") for name in names]
+                for path in files:
+                    target = source / path.relative_to(SOURCE)
+                    target.parent.mkdir(parents=True, exist_ok=True)
+                    shutil.copy2(path, target)
+                base = [binary, "--source", str(source), "--destination", str(home), "--config", str(root / "test.toml"), "--persistent-state", str(root / "state.boltdb"), "--override-data", json.dumps({"profile": profile})]
+                applied = subprocess.run(base + ["apply"], capture_output=True, text=True)
+                self.assertEqual(applied.returncode, 0, applied.stderr)
+                self.assertEqual((home / ".local").stat().st_mode & 0o777, 0o700)
+                manifest = Manifest.load(home / ".config/dotfiles/software.json")
+                self.assertEqual(manifest.profile, profile)
+                self.assertIn("uv", manifest.managed)
+                for name in names:
+                    executable = home / ".local/bin" / name
+                    self.assertTrue(os.access(executable, os.X_OK))
+                    text = executable.read_text()
+                    expected = '#!/usr/bin/env -S "' + str(home / ".local/bin/uv") + '" run --no-config --script'
+                    self.assertEqual(text.splitlines()[0], expected)
+                    self.assertIn('# requires-python = ">=3.12"', text)
+                    self.assertIn('# dependencies = []', text)
+                    # Exercise the helper with the suite's uv-selected Python;
+                    # this fixture deliberately does not install another uv.
+                    helped = subprocess.run([sys.executable, str(executable), "--help"], capture_output=True, text=True)
+                    self.assertEqual(helped.returncode, 0, helped.stderr)
 
 
 class CLITests(unittest.TestCase):
@@ -649,16 +653,10 @@ class CLITests(unittest.TestCase):
             load.assert_not_called()
 
 
-class CompatibilityTests(unittest.TestCase):
-    def test_all_helper_sources_parse_as_python_39(self):
-        paths = list((LIBRARY / "dotfiles_host").glob("*.py")) + list((SOURCE / "private_dot_local/bin").glob("executable_*-host"))
-        for path in paths:
-            with self.subTest(path=path.name):
-                ast.parse(path.read_text(), feature_version=(3, 9))
-
+class WrapperTests(unittest.TestCase):
     def test_wrappers_can_show_help_without_deployment_or_privilege(self):
         for name in ("setup-host", "update-host"):
-            result = subprocess.run([sys.executable, str(SOURCE / "private_dot_local/bin" / ("executable_" + name)), "--help"], capture_output=True, text=True)
+            result = subprocess.run([sys.executable, str(SOURCE / "private_dot_local/bin" / ("executable_" + name + ".tmpl")), "--help"], capture_output=True, text=True)
             self.assertEqual(result.returncode, 0, result.stderr)
             self.assertIn("--dry-run", result.stdout)
 

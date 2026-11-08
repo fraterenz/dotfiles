@@ -5,6 +5,7 @@ import os
 from pathlib import Path
 import shutil
 import subprocess
+import sys
 import tempfile
 import unittest
 
@@ -32,7 +33,8 @@ class ContainerIntegrationTests(unittest.TestCase):
                     chezmoi, "--source", str(SOURCE), "--destination", str(home),
                     "--config", str(temporary / "test.toml"),
                     "--persistent-state", str(temporary / "chezmoi-state"),
-                    "--override-data", json.dumps(data), "apply", "--force",
+                    "--override-data", json.dumps(data), "apply", "--parent-dirs", "--force",
+                    str(home / ".config"), str(home / ".local/lib"), str(home / ".local/bin/setup-containers"),
                 ], capture_output=True, text=True)
                 self.assertEqual(applied.returncode, 0, applied.stderr)
                 paths = Paths(home, home / ".config", home / ".local/state", temporary / "runtime")
@@ -48,7 +50,7 @@ class ContainerIntegrationTests(unittest.TestCase):
                 self.assertNotIn("/home/dev/.config/fish/fish_variables", targets)
                 wrapper = home / ".local/bin/setup-containers"
                 self.assertTrue(os.access(wrapper, os.X_OK))
-                result = subprocess.run([str(wrapper), "--help"], check=True, capture_output=True, text=True)
+                result = subprocess.run([sys.executable, str(wrapper), "--help"], check=True, capture_output=True, text=True)
                 self.assertIn("--rollback", result.stdout)
                 self.assertFalse(list((home / ".local/lib").rglob("__pycache__")))
                 if generator:

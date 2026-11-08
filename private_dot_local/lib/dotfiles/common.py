@@ -1,4 +1,4 @@
-"""Shared commands, Linux host checks, and durable files (Python 3.9+)."""
+"""Shared commands, Linux host checks, and durable files (Python 3.12+)."""
 
 from contextlib import contextmanager
 from dataclasses import dataclass

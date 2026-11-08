@@ -1,6 +1,5 @@
 """Lifecycle fault injection. Mutable paths and service operations are isolated."""
 
-import ast
 import copy
 import json
 import os
@@ -569,10 +568,6 @@ class SupportTests(Fixture):
         template = (SOURCE / "dot_config/dotfiles/devbox/config.json.tmpl").read_text()
         deployed = json.loads(template.replace("{{ .profile | toJson }}", '"local"'))
         self.assertEqual(Settings(self.config).tools, deployed["required_tools"])
-
-    def test_python_39_syntax(self):
-        for path in (SOURCE / "private_dot_local/lib/dotfiles").glob("*.py"):
-            ast.parse(path.read_text(), filename=str(path), feature_version=(3, 9))
 
 
 if __name__ == "__main__":

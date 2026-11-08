@@ -14,9 +14,9 @@ The wallpaper is not distributed.
 
 ## Setup
 
-Install Git, Python 3.9+, and a checksum-verified standalone chezmoi binary at
-`~/.local/bin/chezmoi` first. Do not layer chezmoi. Initialize, choose a profile,
-then review before applying:
+Install Git and a checksum-verified standalone chezmoi binary at
+`~/.local/bin/chezmoi` first. Do not layer chezmoi. Python does not need to be
+installed manually. Initialize, choose a profile, then review before applying:
 
 ```sh
 ~/.local/bin/chezmoi init https://github.com/fraterenz/dotfiles.git
@@ -29,10 +29,35 @@ then review before applying:
 are explicit. Git identity/profile data stays in the private local
 `~/.config/chezmoi/chezmoi.toml` (mode `0600`).
 
+For both profiles, chezmoi also installs only `~/.local/bin/uv` from a versioned,
+checksum-verified upstream archive declared in
+[`.chezmoiexternal.toml.tmpl`](.chezmoiexternal.toml.tmpl). It does not install
+`uvx`, run setup helpers, or install Python during apply. Chezmoi may fetch/cache
+the external archive while preparing a diff or dry run.
+
 ## Everyday commands
 
 Helpers live in `~/.local/bin`. Run them as your normal user, not with `sudo`;
 all support `--dry-run`. Use `--help` for options.
+
+The launchers use the absolute chezmoi-managed uv path and declare Python
+**3.12 or newer**, with no third-party Python dependencies. uv finds a compatible
+interpreter or downloads one when needed and maintains per-script cached
+environments. System Python is not replaced. `--no-config` disables discovered
+uv configuration and Python-version files; inherited environment variables can
+still affect uv, including intentional site settings.
+
+A helper's `--dry-run` suppresses its operational changes, not uv's interpreter
+downloads or runtime/cache preparation before the helper starts. On work hosts,
+obtain approval for uv and Python downloads **before** using chezmoi externals or
+launching helpers: the Python-level host-policy checks happen after uv startup.
+
+Chezmoi owns uv updates: review a new version and architecture checksums in the
+external definition, then apply `~/.local/bin/uv`. `update-host` leaves uv alone.
+Managed-Python patch upgrades are separate, explicit maintenance with
+`~/.local/bin/uv python upgrade VERSION` for the intended installed minor version;
+do not blindly upgrade every managed interpreter. These interpreters can also be
+shared with project environments. System-Python updates remain OS-managed.
 
 | Command | Purpose |
 | --- | --- |
@@ -95,10 +120,13 @@ git -C ~/.local/share/chezmoi config user.email 35176032+fraterenz@users.noreply
 From the source directory:
 
 ```sh
-python3 -m unittest discover -s tests -v
+~/.local/bin/uv run --no-config --no-project --python '>=3.12' \
+  python -m unittest discover -s tests -v
 ```
 
-CI runs tests on Rocky Linux 9/Python 3.9 and Fedora 44 userspace, including editor
-tests on Fedora. There are no release or deployment jobs. Booted Atomic/work-host
-setup, storage/SELinux, live activation and rollback still need disposable-host/VM
-validation; this is not yet a validated clean-machine bootstrap.
+CI installs uv from the same chezmoi external definition into a disposable
+directory and runs tests on Rocky Linux 9/Python 3.12 and Fedora 44/Python 3.14,
+including editor tests on Fedora. There are no release or deployment jobs.
+Booted Atomic/work-host setup, storage/SELinux, live activation and rollback still
+need disposable-host/VM validation; this is not yet a validated clean-machine
+bootstrap.
