@@ -1,0 +1,18 @@
+{
+  "$schema": "https://docs.renovatebot.com/renovate-schema.json",
+  "enabledManagers": ["custom.regex"],
+  "automerge": false,
+  "ignoreUnstable": true,
+  "customManagers": [
+    {
+      "customType": "regex",
+      "managerFilePatterns": [
+        "/^dot_config/dotfiles/devbox/build/Containerfile\\.dev$/"
+      ],
+      "matchStrings": [
+        "# renovate: datasource=(?<datasource>[a-z-]+) depName=(?<depName>\\S+)(?: extractVersion=(?<extractVersion>\\S+))?[ \\t]*\\r?\\nARG [A-Z][A-Z0-9_]*_VERSION=(?<currentValue>\\S+)[ \\t]*(?:\\r?\\n|$)",
+        "# renovate: datasource=(?<datasource>git-refs) depName=(?<depName>https://\\S+) branch=(?<currentValue>\\S+)[ \\t]*\\r?\\nARG [A-Z][A-Z0-9_]*_REF=(?<currentDigest>[a-f0-9]{7,40})[ \\t]*(?:\\r?\\n|$)"
+      ]
+    }
+  ]
+}

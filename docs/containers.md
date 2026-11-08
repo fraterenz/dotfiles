@@ -135,6 +135,57 @@ integrity audit. Review/pin installers and inputs where stronger guarantees are
 required. Update cannot advance a pinned OpenCode version by itself: edit/apply
 the version argument first. Source changes alone do not affect the running image.
 
+### Renovate pin updates
+
+Repository-only configuration in [`.github/renovate.json`](../.github/renovate.json)
+enables only `custom.regex`, with one custom manager and two matching patterns:
+release versions and Git commit references. Both patterns are restricted to the
+exact source path `dot_config/dotfiles/devbox/build/Containerfile.dev` and require
+a `# renovate:` annotation immediately above an unquoted `ARG` declaration.
+The annotations are the allowlist; dependency names and upstreams are not
+repeated in the JSON configuration. Version values remain in the Containerfile.
+
+Renovate proposes stable release updates for gopls, tokei, and OpenCode, and
+branch-head commit updates for the six annotated Neovim plugins. Each plugin's
+branch is explicit in its annotation; nvim-treesitter stays on `master`, never
+the incompatible `main` rewrite. Fedora, floating inputs, unannotated arguments,
+other Containerfiles, host software, and GitHub Actions are outside this scope.
+Automerge is disabled. Renovate opens PRs with old/new versions or commits; it
+does not apply chezmoi files, build images, or deploy the devbox.
+
+To activate updates, commit and push the configuration and annotations to the
+default branch, then enable the [Renovate GitHub App](https://github.com/apps/renovate)
+for `fraterenz/dotfiles` if it is not already enabled. Review the first PRs to
+confirm that changes are limited to the intended pin values in the expected
+Containerfile. Existing repository CI runs normally; it does not prove that the
+complete image or updated plugins are compatible. Image/plugin checks remain
+manual.
+
+After reviewing and merging a PR, pull the source changes into the chezmoi
+checkout, then review/apply the Containerfile and explicitly reconcile the devbox:
+
+```sh
+chezmoi diff ~/.config/dotfiles/devbox/build/Containerfile.dev
+chezmoi apply ~/.config/dotfiles/devbox/build/Containerfile.dev
+~/.local/bin/setup-containers --dry-run
+~/.local/bin/setup-containers
+```
+
+Manually check the affected tools/plugins afterward; use the existing rollback
+workflow if necessary. Adding annotations alone also changes the build-context
+fingerprint: the next explicit setup may rebuild with its cache and restart the
+devbox even when no pin value changed. Applying chezmoi files never starts that
+operation automatically.
+
+For a future version pin, put `# renovate: datasource=DATASOURCE depName=PACKAGE`
+immediately above its `ARG NAME_VERSION=value`. For a commit pin, use
+`# renovate: datasource=git-refs depName=https://HOST/OWNER/REPO branch=BRANCH`
+immediately above `ARG NAME_REF=SHA`; abbreviated and full commit SHAs are
+supported. The optional `extractVersion=REGEX` field on version annotations
+normalizes upstream tags when needed, such as removing OpenCode's tag prefix
+without changing the installer argument's format. Keep annotations in sync when
+changing an upstream. Unannotated custom pins are intentionally ignored.
+
 ### External policy and unsupported overrides
 
 Existing passive systemd resource drop-ins (CPU/IO/memory limits, selected
