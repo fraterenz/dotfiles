@@ -51,7 +51,7 @@ ARG FUGITIVE_REF=3b753cf
 # renovate: datasource=go depName=golang.org/x/tools/gopls
 ARG GOPLS_VERSION=v0.22.0
 # renovate: datasource=github-releases depName=anomalyco/opencode extractVersion=^v?(?<version>.*)$
-ARG OPENCODE_VERSION=1.18.32
+ARG OPENCODE_VERSION=2.4.1
 # nvim-treesitter master is in maintenance mode past v0.10.0 (mid-2024) -- new
 # development moved to the `main` branch as an incompatible rewrite -- so this
 # is pinned to a master SHA rather than a tag. Bump with:
@@ -246,8 +246,8 @@ RUN dnf -y install \
 ENV OPENCODE_DISABLE_AUTOUPDATE=true
 RUN dnf -y install tar gzip \
     && dnf clean all \
-    && curl -fsSL https://opencode.ai/install -o /tmp/opencode-install.sh \
-    && bash /tmp/opencode-install.sh --version "${OPENCODE_VERSION}" --no-modify-path \
+    && curl -fsSL https://opencode.ai/v2/install -o /tmp/opencode-install.sh \
+    && SHELL=/bin/bash bash /tmp/opencode-install.sh --version "${OPENCODE_VERSION}" --no-modify-path \
     && install -m 0755 "$HOME/.opencode/bin/opencode" /usr/local/bin/opencode \
     && rm -f /tmp/opencode-install.sh "$HOME/.opencode/bin/opencode" \
     && /usr/local/bin/opencode --version
