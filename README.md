@@ -6,6 +6,9 @@ Chezmoi deploys configuration and bootstraps uv, which provides Python 3.12+
 for the helper commands. These manage host software and the rootless Podman
 devbox when explicitly invoked; applying the dotfiles never runs them.
 
+See the [update guide](docs/updates.md) to update the host or devbox, preview
+changes, or pin a host tool version.
+
 ## Shared setup
 
 Install Git, then follow the
@@ -81,8 +84,14 @@ After completing the prerequisites for your profile, use the shared helpers in
 | `setup-host` | Install missing software declared for the selected profile. |
 | `update-host` | Update all permitted phases, or select them using additive flags. |
 
-Review `setup-host --dry-run` before the first setup. Both commands support
-`--help` for options.
+For first-time host setup, preview with `~/.local/bin/setup-host --dry-run`.
+If the plan looks right, run this to install the missing host software:
+
+```sh
+~/.local/bin/setup-host
+```
+
+For an update instead, use `update-host`:
 
 ```sh
 update-host --flatpak --user-tools  # Local: both concurrently, no OS update
@@ -91,11 +100,8 @@ update-host --user-tools            # Either profile: registered user tools only
 update-host --all --dry-run         # Review every update permitted by the profile
 ```
 
-With no selectors, `update-host` updates all permitted phases. On local hosts,
-Flatpak and user tools run concurrently, then rpm-ostree runs last. On work
-hosts, only user tools are available. Expected failures do not block independent
-updates; the final report exits nonzero if any failed. See
-[update behaviour and Python API](docs/updates.md) for details.
+With no selectors, `update-host` updates everything permitted by the active
+profile.
 
 To change the software selection, edit the
 [software manifest](dot_config/dotfiles/software.json.tmpl) through chezmoi,

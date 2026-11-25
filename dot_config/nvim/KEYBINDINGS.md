@@ -16,7 +16,7 @@ nvim --headless -c 'lua print("leader=[" .. vim.g.mapleader .. "]")' -c q
 |----------------|-----------------------------------------|------------------|
 | `K`            | Hover                                   | Neovim default   |
 | `gra`          | Code action                             | Neovim default   |
-| `crn`          | Rename                                  | Neovim default   |
+| `grn`          | Rename                                  | Neovim default   |
 | `grr`          | References                              | Neovim default   |
 | `[d` / `]d`    | Prev / next diagnostic                  | Neovim default   |
 | `<leader>d`    | Diagnostic float at cursor              | `keybinds.lua`   |

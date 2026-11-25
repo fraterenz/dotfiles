@@ -1,114 +1,118 @@
-# Composable host updates
+# Update guide
 
-`update-host` updates the selected software on the current machine. It never
-reboots automatically. Run it as your normal user, through the existing
-chezmoi-managed uv launcher.
+Run these commands on the host as your normal user, not with `sudo`. The
+helpers are in `~/.local/bin`.
+
+## Update the host
+
+Run `update-host` for everything allowed by your profile, or select what to
+update:
 
 ```sh
-update-host                              # All updates allowed by this profile
-update-host --all                        # Same selection, explicitly
-update-host --flatpak                    # Local Flatpak installations only
-update-host --user-tools                 # Registered user tools/managers only
-update-host --rpm-ostree                  # Local OS only
-update-host --flatpak --user-tools       # Both, concurrently; no OS update
-update-host --user-tools --dry-run
+update-host                          # All updates allowed by your profile
+update-host --user-tools             # Registered host tools only
+update-host --flatpak                # Flatpaks only (local)
+update-host --rpm-ostree             # Stage an OS update (local)
+update-host --flatpak --user-tools   # Both, without an OS update (local)
 ```
 
-Selectors are additive and repeated selectors are deduplicated. `--all` cannot
-be combined with individual selectors. Existing `--manifest` and `--policy`
-options remain available. There is no `--jobs` or sequential-mode option.
+If an OS update was staged, reboot when ready to activate it. `update-host`
+never reboots automatically. On `work`, follow the
+[site approval steps](../README.md#work-profile-rocky-linux-9) before running
+the helper, even for a dry run.
+
+## Update `dev`
+
+To refresh an already managed Podman devbox, save your work and back up
+important data first: deploying the new image replaces the `dev` container.
+
+```sh
+setup-containers --update
+```
+
+This pulls a fresh base and rebuilds without cache. It can refresh unpinned
+dependencies, but it does not change version pins. For first-time adoption or
+rollback, see the [devbox lifecycle guide](containers.md).
+
+To change the OpenCode version, see
+[Upgrade OpenCode in `dev`](containers.md#upgrade-opencode-in-dev).
+
+## Dry runs and host tool organization
+
+### Preview changes
+
+Add `--dry-run` to preview the operation before running it:
+
+```sh
+update-host --user-tools --dry-run    # Preview host tool updates
+setup-containers --update --dry-run   # Preview a no-cache devbox rebuild
+setup-containers --dry-run            # Preview applying a staged devbox change
+```
+
+The host preview can query local state, release metadata, and checksums, but
+does not download release archives, replace software, or create updater state.
+The devbox preview does not build an image or restart `dev`. Either launcher can
+still download Python or prepare uv's cache before the helper starts; obtain
+work-site approval for those downloads before running it.
+
+### Find what manages each host tool
+
+| Host software | How it is updated |
+| --- | --- |
+| OS and RPMs, including fish and Podman | `update-host --rpm-ostree` stages updates on `local`; the site administrator manages them on `work`. |
+| Flatpak apps and runtimes | `update-host --flatpak` updates all installed apps and runtimes in configured scopes (`--user`, `--system`, or a named installation) on `local`. |
+| Downloaded CLI tools | `update-host --user-tools` reads the [software manifest](../dot_config/dotfiles/software.json.tmpl) and updates registered tools in `~/.local/bin`. |
+| uv, helper launchers, and managed Python | Chezmoi owns uv and the launchers; manage Python separately as described in [runtime maintenance](../README.md#runtime-maintenance). |
+
+All six `downloaded_tools` in the software manifest currently use
+`"policy": "latest"`: chezmoi, bat, fzf, glow, ripgrep (`rg`), and zoxide. This
+selects the release GitHub marks as Latest, not necessarily the highest tag.
+The helper chooses a precompiled Linux binary for the host CPU from the
+manifest's release asset list. It verifies the archive's SHA-256 and checks the
+binary's architecture and `--version` before replacing the installed binary.
+Nothing is compiled locally.
+
+The user-tools phase can also run registered tool managers, but none are
+configured. If `update-host --user-tools` finds an unregistered entry in
+`~/.local/bin`, such as a personal script, it reports it and leaves it alone.
+It still attempts the registered updates, but reports the phase as incomplete
+and exits with status 1 even if all those updates succeed.
+
+### Pin a host tool to a release
+
+Open the manifest source through chezmoi:
+
+```sh
+chezmoi edit ~/.config/dotfiles/software.json
+```
+
+Set the tool's `version` to an exact upstream tag. For example, change the `fzf`
+entry to `"version": {"policy": "pinned", "tag": "v0.67.0"}`. Then apply the
+manifest and run the user-tools phase. Other registered tools still follow
+their own version policies.
+
+```sh
+chezmoi apply ~/.config/dotfiles/software.json
+update-host --user-tools
+```
 
 ## Profiles and execution
 
-| Profile | Stage 0 | Stage 1 |
-| --- | --- | --- |
-| `local` | Flatpak and user tools, concurrently | rpm-ostree |
-| `work` | User tools | — |
+| Profile | Default update order |
+| --- | --- |
+| `local` | Flatpaks and user tools run concurrently, then `rpm-ostree` runs last. |
+| `work` | Only user tools; Flatpak and OS selectors are rejected. |
 
-Explicitly requesting Flatpak or rpm-ostree on `work` is rejected before any
-updates. Work updates do not run DNF, inspect repositories, query installed
-RPMs, or query Flatpak availability. They still require an owned, non-writable-by-
-others machine-local policy containing `"approved": true`; unused DNF/Flatpak
-policy sections are not prerequisites for user-tool updates. Site approval for
-uv/Python startup downloads must be obtained separately, before launching the
-helper.
+Selectors are additive. `--all` is the default and cannot be combined with an
+individual selector. See `update-host --help` for `--manifest` and `--policy`.
+On `work`, the updater checks the machine-local approval policy without using
+DNF or Flatpak settings.
 
-An expected failure does not stop independent updates. Every configured Flatpak
-installation and every registered user tool/manager is attempted. rpm-ostree
-waits for both earlier phases to finish, whether they succeeded or failed. The
-final report lists all completed phases and exits nonzero if any failed.
+An expected failure does not block independent updates or stop `rpm-ostree`
+from running after the earlier phases finish. The report exits nonzero if any
+phase failed. Host setup and updates share a lock; interrupting an update does
+not roll back completed operations. `setup-host` still uses its own prerequisite
+ordering and reboot checkpoints.
 
-Flatpak installations are scopes such as `--user`, `--system`, or
-`--installation=NAME`, not individual application IDs. Updates cover installed
-applications and runtimes in each configured scope. Installations within a phase
-and individual user tools remain sequential. Registered user-tool managers must
-own only user-tool resources, not native packages or Flatpak installations.
-
-One shared lock excludes concurrent setup/update runs. Interrupting a run stops
-new stages and cooperatively stops active commands; it does not roll back
-already completed package-manager transactions. Check completed operations
-before retrying. Tool replacements retain their existing per-file recovery
-guarantees. Binaries are tested on the currently booted host, not a staged OS.
-
-Dry runs may query local state and upstream release metadata, but do not install,
-replace files, download release archives, or create updater state. As with the
-other helpers, uv's interpreter/environment/cache preparation happens before
-the Python helper and is outside these operational dry-run guarantees. This
-command updates neither uv nor managed Python interpreters.
-
-`setup-host` keeps its prerequisite ordering and reboot checkpoints; it does not
-use this independent-update scheduling policy.
-
-## Python API
-
-The implementation lives under `dotfiles_host/updates/`:
-
-- `operations.py`: immutable phases/results, concrete update functions, staged
-  executor.
-- `policy.py`: profile registries, selector resolution, approval, and binding.
-- `__init__.py`: lightweight execution-API exports.
-
-```python
-from collections.abc import Callable, Mapping
-from dataclasses import dataclass
-
-type UpdateFunction = Callable[[], None]
-
-@dataclass(frozen=True)
-class Phase:
-    name: UpdateTarget
-    stage: int
-
-@dataclass(frozen=True)
-class PhaseResult:
-    phase: Phase
-    succeeded: bool
-    detail: str = ""
-
-def run_updates(updates: Mapping[Phase, UpdateFunction]) -> UpdateReport:
-    ...
-```
-
-Each `PhaseResult.phase` references the submitted immutable phase. An update
-function returns normally on success or raises an existing domain/OS error on
-failure. Unexpected programming errors and interrupts abort later stages.
-
-The policy layer chooses one registry for the active profile, resolves CLI flags
-to canonical phases, and uses `functools.partial` to bind operation-specific data
-and a configured command runner. The mapping itself is the execution plan:
-
-```python
-report = run_updates({
-    FLATPAK: flatpak_update,
-    USER_TOOLS: user_tools_update,
-})
-```
-
-The executor has no profile, registry, selector, dry-run, or concurrency
-parameters. It validates the complete plan before invoking any function and
-returns results in stage order, preserving plan order within each stage.
-`UpdateTarget.ALL` is only a CLI selector and cannot be an executable phase.
-
-The generic executor does not enforce profile approval or acquire the host
-lock: those belong to the command/policy boundary. The CLI also installs the
-interrupt guard before execution so the phase runners share cancellation.
+For implementation details, see the
+[Python code behind `update-host`](../private_dot_local/lib/dotfiles_host/updates/).
